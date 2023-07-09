@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "viramp_hub"
+authors = [
+    {name = "Wolfgang Maier", email = "maierw@informatik.uni-freiburg.de"},
+]
+description = "VirAmp-Hub lets you manipulate/convert viral amplicon/primer scheme information."
+readme = "README.md"
+requires-python = ">=3.6"
+keywords = ["virology", "tiled-amplicon", "primer schemes"]
+license = {file = "LICENSE"}
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.scripts]
+scheme-convert = "viramp_hub.command:main"
+
+[project.urls]
+"Homepage" = "https://github.com/wm75/viramp-hub"
+
+[tool.setuptools.dynamic]
+version = {attr = "viramp_hub.__version__"}
+
