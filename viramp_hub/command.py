@@ -1,5 +1,7 @@
 import argparse
+import sys
 
+from . import notice
 from .scheme import Scheme
 
 
@@ -17,14 +19,22 @@ def main():
     )
     parser.add_argument(
         '-t', '--to', required=True,
-        choices=['ivar-bed', 'cojac-insert-bed', 'amplicon-info'],
+        choices=['bed', 'amplicon-info'],
         help='Type of output to be generated'
+    )
+    parser.add_argument(
+        '-b', '--bed-type',
+        choices=['ivar', 'cojac'],
+        help='For "bed" output, the type of bed to be written; '
+             'Currently, you can specify "ivar" to produce primer bed output '
+             'compatible with the ivar suite of tools, or "cojac" to generate '
+             'the amplicon insert bed expected by cojac.'
     )
     parser.add_argument(
         '-r', '--report-nested',
         choices=['full', 'inner', 'outer'], default='full',
         help='For amplicons formed by nested primers, report all primers, '
-             'or just inner or outer ones. Only applied when writing '
+             'or just inner or outer ones. Applied only when writing '
              'amplicon info files (default: "full").'
     )
     parser.add_argument(
@@ -33,6 +43,10 @@ def main():
              '(only "bed" is supported in this version)'
     )
 
+    if len(sys.argv)<2:
+        print(notice, file=sys.stderr)
+        print('\nPlease run with -h / --help for help.', file=sys.stderr)
+        sys.exit(2)
     args = parser.parse_args()
 
     with open(args.input) as input_data:
@@ -47,13 +61,18 @@ def main():
             )
 
     with open(args.output, 'w') as out:
-        if args.to == 'ivar-bed':
-            scheme.write_sanitized_bed(out)
-        elif args.to == 'cojac-insert-bed':
-            scheme.write_insert_bed(out)
+        if args.to == 'bed':
+            if not args.bed_type:
+                sys.exit(
+                    'Please specify the type of bed output to be produced '
+                    'through the -b / --bed-type option.'
+                )
+            if args.bed_type == 'ivar':
+                scheme.write_sanitized_bed(out)
+            elif args.bed_type == 'cojac':
+                scheme.write_insert_bed(out)
         elif args.to == 'amplicon-info':
-            mode = args.report_nested or 'full'
-            scheme.write_amplicon_info(out, mode)
+            scheme.write_amplicon_info(out, args.report_nested)
 
 if __name__ == '__main__':
     main()
