@@ -19,7 +19,7 @@ def main():
     )
     parser.add_argument(
         '-t', '--to', required=True,
-        choices=['bed', 'amplicon-info'],
+        choices=['bed', 'bedpe', 'amplicon-info'],
         help='Type of output to be generated'
     )
     parser.add_argument(
@@ -71,6 +71,8 @@ def main():
                 scheme.write_sanitized_bed(out)
             elif args.bed_type == 'cojac':
                 scheme.write_insert_bed(out)
+        elif args.to == 'bedpe':
+            scheme.write_bedpe(out)
         elif args.to == 'amplicon-info':
             scheme.write_amplicon_info(out, args.report_nested)
 

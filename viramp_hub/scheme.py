@@ -152,3 +152,50 @@ class Scheme:
             o.write(
                 f'{amplicon[1]}\t{insert_start}\t{insert_end}\t{insert_name}\t{amplicon[2]}\t+\n'
                 )
+
+    def write_bedpe(self, o):
+        """Write the primer scheme as 11-column BEDPE.
+
+        The amplicon name will be used as the value of column 7 and
+        the pool ID will be written to column 11. If there is more
+        than one primer pair defining an amplicon all (coordinate-sorted)
+        combinations of fw and rv primers will be written as separate lines
+        with increasing index numbers in column 8 (as with
+        https://github.com/rki-mf1/CoVpipe2).
+        See https://bedtools.readthedocs.io/en/latest/content/general-usage.html#bedpe-format
+        for a definition of the BEDPE format."""
+
+        # First, generate a totally sorted copy of the amplicons,
+        # in which the primers for each amplicon are sorted by start, stop,
+        # and where also the amplicons are sorted by their outermost
+        # coordinates
+        coord_sorted_amplicons = sorted((
+            (
+                amplicon_id, (
+                    sorted(
+                        amplicon[0],
+                        key=lambda x: (x[0], x[1])
+                    ),
+                    amplicon[1],
+                    amplicon[2]
+                )
+            ) for amplicon_id, amplicon in self.amplicons.items()),
+            key=lambda x: (x[1][0][0], x[1][-1][1])
+        )
+        for amplicon_id, amplicon in coord_sorted_amplicons:
+            fw_primers = [primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '+']
+            rv_primers = [primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '-']
+            pair_index = 0
+            if self.name:
+                amplicon_name = f'{self.name}_AMPLICON_{amplicon_id}'
+            else:
+                amplicon_name = f'AMPLICON_{amplicon_id}'
+            for fw_p in fw_primers:
+                for rv_p in rv_primers:
+                    o.write(
+                        f'{amplicon[1]}\t{fw_p[0]}\t{fw_p[1]}\t'
+                        f'{amplicon[1]}\t{rv_p[0]}\t{rv_p[1]}\t'
+                        f'{amplicon_name}\t{pair_index}\t{fw_p[3]}\t{rv_p[3]}\t'
+                        f'{amplicon[2]}\n'
+                    )
+                    pair_index += 1
