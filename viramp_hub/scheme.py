@@ -1,5 +1,72 @@
 import re
 
+from typing import NamedTuple, Literal
+
+
+class Primer(NamedTuple):
+    start: int
+    end: int
+    name: str
+    strand: Literal['+', '-']
+
+
+class Amplicon:
+    def __init__(self, primers, ref_id, pool_id):
+        self.primers = primers
+        self.ref_id = ref_id
+        self.pool_id = pool_id
+
+    @property
+    def outer_fw(self):
+        return min(
+            (primer for primer in self.primers if primer.strand == '+'),
+            key=lambda x: x.start
+        )
+
+    @property
+    def outer_rv(self):
+        return max(
+            (primer for primer in self.primers if primer.strand == '-'),
+            key=lambda x: x.end
+        )
+
+    @property
+    def inner_fw(self):
+        return max(
+            (primer for primer in self.primers if primer.strand == '+'),
+            key=lambda x: x.start
+        )
+
+    @property
+    def inner_rv(self):
+        return min(
+            (primer for primer in self.primers if primer.strand == '-'),
+            key=lambda x: x.end
+        )
+
+    def append_primer(self, primer, ref_id, pool_id):
+        """Safely add a primer to an amplicon.
+
+        The required ref_id and pool_id are checked for a match with the
+        amplicon's attributes and a ValueError gets raised if the primer cannot
+        belong to the amplicon based on them.
+        """
+
+        if self.ref_id != ref_id:
+            raise ValueError(
+                'Reference mismatch between primer "{0}" and existing amplicon: '
+                'Primer associated with reference "{1}", amplicon with "{2}".'
+                .format(primer.name, ref_id, self.ref_id)
+            )
+        if self.pool_id != pool_id:
+            raise ValueError(
+                'Pool mismatch between primer "{0}" and existing amplicon: '
+                'Primer associated with pool "{1}", amplicon with "{2}".'
+                .format(primer.name, pool_id, self.pool_id)
+            )
+        self.primers.append(primer)
+
+
 class Scheme:
     amplicon_pat = re.compile(
         r'(?P<prefix>(.*_)*)(?P<num>\d+).*_(?P<name>L(?:EFT)?|R(?:IGHT)?)'
@@ -11,24 +78,23 @@ class Scheme:
         prefixes_seen = set()
         
         for primer_dat, ref_id, pool_id in cls.read_primer_bed(primer_scheme):
-            name = primer_dat[2]
-            re_match = cls.amplicon_pat.match(name)
+            re_match = cls.amplicon_pat.match(primer_dat.name)
             if re_match is None:
                 raise ValueError(
-                    '{} does not match expected amplicon name format'.format(name)
+                    '{} does not match expected amplicon name format'
+                    .format(primer_dat.name)
                 )
             prefix = re_match.group('prefix')[:-1]
             prefixes_seen.add(prefix)
             amplicon_id = int(re_match.group('num'))
             if amplicon_id in amplicons:
-                amplicon = amplicons[amplicon_id]
-                if amplicon[1] != ref_id:
-                    raise ValueError('ref error')
-                if amplicon[2] != pool_id:
-                    raise ValueError('pool_error')
-                amplicon[0].append(primer_dat)
+                amplicons[amplicon_id].append_primer(
+                    primer_dat, ref_id, pool_id
+                )
             else:
-                amplicons[amplicon_id] = ([primer_dat], ref_id, pool_id)
+                amplicons[amplicon_id] = Amplicon(
+                    [primer_dat], ref_id, pool_id
+                )
 
         if len(prefixes_seen) == 1 and prefix:
             scheme_name = prefix
@@ -53,22 +119,21 @@ class Scheme:
 
         amplicons = {}
         for primer_dat, ref_id, pool_id in cls.read_primer_bed(primer_scheme):
-            name = primer_dat[2]
             try:
-                mapped_id = primer_amplicon_mapping[name]
+                mapped_id = primer_amplicon_mapping[primer_dat.name]
             except KeyError:
                 raise ValueError(
-                    f'BED file primer: "{name}" not listed in amplicon info!'
+                    'BED file primer: "{}" not listed in amplicon info!'
+                    .format(primer_dat.name)
                 )
             if mapped_id in amplicons:
-                amplicon = amplicons[mapped_id]
-                if amplicon[1] != ref_id:
-                    raise ValueError('ref error')
-                if amplicon[2] != pool_id:
-                    raise ValueError('pool_error')
-                amplicon[0].append(primer_dat)
+                amplicons[mapped_id].append_primer(
+                    primer_dat, ref_id, pool_id
+                )
             else:
-                amplicons[mapped_id] = ([primer_dat], ref_id, pool_id)
+                amplicons[mapped_id] = Amplicon(
+                    [primer_dat], ref_id, pool_id
+                )
 
         return cls(amplicons, scheme_name)
 
@@ -79,11 +144,11 @@ class Scheme:
                 continue
             fields = record.strip('\n').split('\t')
             
-            primer_dat = (
-                int(fields[1]), # start
-                int(fields[2]), # end
-                fields[3],      # name
-                fields[5]       # strand
+            primer_dat = Primer(
+                start = int(fields[1]),
+                end = int(fields[2]),
+                name = fields[3],
+                strand = fields[5]
             )
             ref_id = fields[0]
             pool_id = fields[4]
@@ -96,61 +161,37 @@ class Scheme:
 
     def write_sanitized_bed(self, o):
         records = sorted(
-            ((primer, ref, pool)
-            for primers, ref, pool in self.amplicons.values()
-            for primer in primers),
+            ((primer, amplicon.ref_id, amplicon.pool_id)
+            for amplicon in self.amplicons.values()
+            for primer in amplicon.primers),
             # sort by ref, start, end
-            key=lambda x: (x[1], x[0][0], x[0][1])
+            key=lambda x: (x[1], x[0].start, x[0].end)
         )
-        for primer_dat, ref_id, pool_id in records:
+        for primer, ref_id, pool_id in records:
             o.write(
-                f'{ref_id}\t{primer_dat[0]}\t{primer_dat[1]}\t{primer_dat[2]}\t60\t{primer_dat[3]}\n'
+                f'{ref_id}\t{primer.start}\t{primer.end}\t{primer.name}\t60\t{primer.strand}\n'
             )
             
     def write_amplicon_info(self, o, mode='full'):
         for amplicon in self.amplicons.values():
             if mode == 'full':
-                names = [primer_dat[2] for primer_dat in amplicon[0]]
-                o.write('\t'.join(names) + '\n')
+                names = [primer_dat.name for primer_dat in amplicon.primers]
             elif mode == 'outer':
-                first = min(
-                    (primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '+'),
-                    key=lambda x: x[0]
-                )
-                last = max(
-                    (primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '-'),
-                    key=lambda x: x[1]
-                )
-                o.write(f'{first[2]}\t{last[2]}\n')
+                names = [amplicon.outer_fw.name, amplicon.outer_rv.name]
             elif mode == 'inner':
-                first = max(
-                    (primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '+'),
-                    key=lambda x: x[0]
-                )
-                last = min(
-                    (primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '-'),
-                    key=lambda x: x[1]
-                )
-                o.write(f'{first[2]}\t{last[2]}\n')
+                names = [amplicon.inner_fw.name, amplicon.inner_rv.name]
+            o.write('\t'.join(names) + '\n')
 
     def write_insert_bed(self, o):
         for amplicon_id, amplicon in sorted(self.amplicons.items()):
-            first = max(
-                (primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '+'),
-                key=lambda x: x[0]
-            )
-            last = min(
-                (primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '-'),
-                key=lambda x: x[1]
-            )
-            insert_start = first[1]
-            insert_end = last[0]
+            insert_start = amplicon.inner_fw.end
+            insert_end = amplicon.inner_rv.start
             if self.name:
                 insert_name = f'{self.name}_INSERT_{amplicon_id}'
             else:
                 insert_name = f'INSERT_{amplicon_id}'
             o.write(
-                f'{amplicon[1]}\t{insert_start}\t{insert_end}\t{insert_name}\t{amplicon[2]}\t+\n'
+                f'{amplicon.ref_id}\t{insert_start}\t{insert_end}\t{insert_name}\t{amplicon.pool_id}\t+\n'
                 )
 
     def write_bedpe(self, o):
@@ -171,20 +212,22 @@ class Scheme:
         # coordinates
         coord_sorted_amplicons = sorted((
             (
-                amplicon_id, (
+                amplicon_id,
+                Amplicon(
                     sorted(
-                        amplicon[0],
-                        key=lambda x: (x[0], x[1])
+                        amplicon.primers,
+                        key=lambda x: (x.start, x.end)
                     ),
-                    amplicon[1],
-                    amplicon[2]
+                    amplicon.ref_id,
+                    amplicon.pool_id
                 )
             ) for amplicon_id, amplicon in self.amplicons.items()),
-            key=lambda x: (x[1][0][0], x[1][-1][1])
+            key=lambda x: (x[1].ref_id, x[1].primers[0].start, x[1].primers[-1].end)
         )
+
         for amplicon_id, amplicon in coord_sorted_amplicons:
-            fw_primers = [primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '+']
-            rv_primers = [primer_dat for primer_dat in amplicon[0] if primer_dat[3] == '-']
+            fw_primers = [primer_dat for primer_dat in amplicon.primers if primer_dat[3] == '+']
+            rv_primers = [primer_dat for primer_dat in amplicon.primers if primer_dat[3] == '-']
             pair_index = 0
             if self.name:
                 amplicon_name = f'{self.name}_AMPLICON_{amplicon_id}'
@@ -193,9 +236,9 @@ class Scheme:
             for fw_p in fw_primers:
                 for rv_p in rv_primers:
                     o.write(
-                        f'{amplicon[1]}\t{fw_p[0]}\t{fw_p[1]}\t'
-                        f'{amplicon[1]}\t{rv_p[0]}\t{rv_p[1]}\t'
-                        f'{amplicon_name}\t{pair_index}\t{fw_p[3]}\t{rv_p[3]}\t'
-                        f'{amplicon[2]}\n'
+                        f'{amplicon.ref_id}\t{fw_p.start}\t{fw_p.end}\t'
+                        f'{amplicon.ref_id}\t{rv_p.start}\t{rv_p.end}\t'
+                        f'{amplicon_name}\t{pair_index}\t{fw_p.strand}\t{rv_p.strand}\t'
+                        f'{amplicon.pool_id}\n'
                     )
                     pair_index += 1
